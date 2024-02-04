@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use bytes::Bytes;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
@@ -278,8 +278,27 @@ impl LsmStorageInner {
     }
 
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
-    pub fn get(&self, _key: &[u8]) -> Result<Option<Bytes>> {
-        unimplemented!()
+    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+        let guard = self.state.read();
+        let snapshot = &guard;
+
+        if let Some(value) = snapshot.memtable.get(key) {
+            if value.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(value));
+        }
+
+        for memtable in snapshot.imm_memtables.iter() {
+            if let Some(value) = memtable.get(key) {
+                if value.is_empty() {
+                    return Ok(None);
+                }
+                return Ok(Some(value));
+            }
+        }
+
+        Ok(None)
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
@@ -288,13 +307,47 @@ impl LsmStorageInner {
     }
 
     /// Put a key-value pair into the storage by writing into the current memtable.
-    pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
-        unimplemented!()
+    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        assert!(!value.is_empty(), "value cannot be empty!");
+        assert!(!key.is_empty(), "key cannot be empty!");
+
+        let size;
+        {
+            let guard = self.state.read();
+            guard.memtable.put(key, value)?;
+            size = guard.memtable.approximate_size();
+        }
+
+        self.try_freeze(size)?;
+        Ok(())
     }
 
     /// Remove a key from the storage by writing an empty value.
-    pub fn delete(&self, _key: &[u8]) -> Result<()> {
-        unimplemented!()
+    pub fn delete(&self, key: &[u8]) -> Result<()> {
+        assert!(!key.is_empty(), "key cannot be empty!");
+
+        let size;
+        {
+            let guard = self.state.read();
+            guard.memtable.put(key, b"")?;
+            size = guard.memtable.approximate_size();
+        }
+
+        self.try_freeze(size)?;
+
+        Ok(())
+    }
+
+    fn try_freeze(&self, estimated_size: usize) -> Result<()> {
+        if estimated_size >= self.options.target_sst_size {
+            let state_lock = self.state_lock.lock();
+            let guard = self.state.read();
+            if guard.memtable.approximate_size() >= self.options.target_sst_size {
+                drop(guard);
+                self.force_freeze_memtable(&state_lock)?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
