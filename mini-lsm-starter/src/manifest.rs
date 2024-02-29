@@ -1,3 +1,5 @@
+// Code Segment 1 : Global import and config, macro and const.
+
 #![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
 
 use std::fs::File;
@@ -10,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::compact::CompactionTask;
 
+// Code Segment 2 : Object declare, struct / enum / Trait...
 pub struct Manifest {
     file: Arc<Mutex<File>>,
 }
@@ -21,6 +24,7 @@ pub enum ManifestRecord {
     Compaction(CompactionTask, Vec<usize>),
 }
 
+// Code Segment 3 : Impl methods for Object
 impl Manifest {
     pub fn create(_path: impl AsRef<Path>) -> Result<Self> {
         unimplemented!()

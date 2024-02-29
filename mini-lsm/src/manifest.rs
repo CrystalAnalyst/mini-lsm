@@ -1,3 +1,4 @@
+// Code Segment 1 : use crate, const declare, macro declare.
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::compact::CompactionTask;
 
+// Code Segment 2 : Object declare
 pub struct Manifest {
     file: Arc<Mutex<File>>,
 }
@@ -21,6 +23,7 @@ pub enum ManifestRecord {
     Compaction(CompactionTask, Vec<usize>),
 }
 
+// Code Segment 3 : Impl methods for Objects.
 impl Manifest {
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
         Ok(Self {

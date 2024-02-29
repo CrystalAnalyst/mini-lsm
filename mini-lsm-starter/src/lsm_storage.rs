@@ -16,7 +16,7 @@ use crate::compact::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
-use crate::manifest::Manifest;
+use crate::manifest::{Manifest, ManifestRecord};
 use crate::mem_table::MemTable;
 use crate::mvcc::LsmMvccInner;
 use crate::table::SsTable;
@@ -370,9 +370,36 @@ impl LsmStorageInner {
         unimplemented!()
     }
 
+    fn freeze_memtable_with_memtable(&self, memtable: Arc<MemTable>) -> Result<()> {
+        // make sure only one thread at a time can modify shared data.
+        let mut guard = self.state.write();
+        // creates a snapshot of the current state by cloning the shared state.
+        let mut snapshot = guard.as_ref().clone();
+        let old_memtable = std::mem::replace(&mut snapshot.memtable, memtable);
+        // Add the memtable to the immutable memtables.
+        snapshot.imm_memtables.insert(0, old_memtable.clone());
+        // Update the snapshot.
+        *guard = Arc::new(snapshot);
+        // Release the write lock when we're done.
+        // allow other threads to access the shared state.
+        drop(guard);
+        // sync changes with WAL.
+        old_memtable.sync_wal()?;
+
+        Ok(())
+    }
+
     /// Force freeze the current memtable to an immutable memtable
-    pub fn force_freeze_memtable(&self, _state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
-        unimplemented!()
+    pub fn force_freeze_memtable(&self, state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
+        let memtable_id = self.next_sst_id();
+        let memtable = Arc::new(MemTable::create(memtable_id));
+        self.freeze_memtable_with_memtable(memtable)?;
+        self.manifest.as_ref().unwrap().add_record(
+            state_lock_observer,
+            ManifestRecord::NewMemtable(memtable_id),
+        )?;
+        self.sync_dir()?;
+        Ok(())
     }
 
     /// Force flush the earliest-created immutable memtable to disk
